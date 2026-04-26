@@ -1,0 +1,7 @@
+# Local configuration with secrets — never commit.
+config.env
+**/config.env
+
+# Run-time artifacts.
+*.log
+logs/
