@@ -3,7 +3,11 @@
 # github-backup.sh — Mirror-clone every repo across one or more GitHub
 # organizations or users to a local directory. Designed to run on a
 # Synology NAS via DSM Task Scheduler, but works on any *nix host with
-# bash, git, curl, and jq.
+# bash, git, curl, and python3.
+#
+# All dependencies are available from Synology's first-party Package
+# Center (Git Server, Python 3) — no third-party package repositories
+# (Entware/Homebrew/etc.) required.
 #
 # Configuration is loaded from (in order of precedence):
 #   1. Environment variables already set in the calling shell
@@ -33,7 +37,7 @@ INCLUDE_FORKS="${INCLUDE_FORKS:-true}"
 INCLUDE_ARCHIVED="${INCLUDE_ARCHIVED:-true}"
 GIT_BIN="${GIT_BIN:-git}"
 CURL_BIN="${CURL_BIN:-curl}"
-JQ_BIN="${JQ_BIN:-jq}"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
 GITHUB_API_URL="${GITHUB_API_URL:-https://api.github.com}"
 
 mkdir -p "$BACKUP_ROOT" "$LOG_DIR"
@@ -49,7 +53,7 @@ err() {
 }
 
 # ---------- preflight ----------
-for cmd in "$GIT_BIN" "$CURL_BIN" "$JQ_BIN"; do
+for cmd in "$GIT_BIN" "$CURL_BIN" "$PYTHON_BIN"; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
         err "required command not found: $cmd"
         exit 1
@@ -70,11 +74,60 @@ github_api() {
         "$@"
 }
 
+# Reads a JSON object from stdin and prints the value at the given
+# top-level key, or the empty string if the key is missing.
+json_str_field() {
+    "$PYTHON_BIN" -c '
+import json, sys
+key = sys.argv[1]
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(2)
+if not isinstance(data, dict):
+    sys.exit(0)
+val = data.get(key)
+print("" if val is None else val)
+' "$1"
+}
+
+# Reads a JSON array of repo objects from stdin and emits, on stdout:
+#   __COUNT__\t<unfiltered length>
+#   REPO\t<name>\t<clone_url>     (one per repo that passes filters)
+parse_repos_page() {
+    INCLUDE_FORKS="$INCLUDE_FORKS" INCLUDE_ARCHIVED="$INCLUDE_ARCHIVED" \
+    "$PYTHON_BIN" -c '
+import json, sys, os
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(2)
+if not isinstance(data, list):
+    sys.exit(2)
+forks = os.environ.get("INCLUDE_FORKS", "true") == "true"
+archived = os.environ.get("INCLUDE_ARCHIVED", "true") == "true"
+print(f"__COUNT__\t{len(data)}")
+for r in data:
+    if not isinstance(r, dict):
+        continue
+    if not forks and r.get("fork"):
+        continue
+    if not archived and r.get("archived"):
+        continue
+    name = r.get("name", "")
+    url = r.get("clone_url", "")
+    if not name or not url:
+        continue
+    if "\t" in name or "\t" in url or "\n" in name or "\n" in url:
+        continue
+    print(f"REPO\t{name}\t{url}")
+'
+}
+
 # Returns "Organization" or "User" for a given account name.
 detect_account_type() {
     local name="$1"
-    github_api "$GITHUB_API_URL/users/$name" \
-        | "$JQ_BIN" -r '.type // "Unknown"'
+    github_api "$GITHUB_API_URL/users/$name" | json_str_field "type"
 }
 
 # Emits "<name>|<clone_url>" lines for every repo in an account.
@@ -93,9 +146,11 @@ list_account_repos() {
         # ones. Fall back to /users/{name}/repos when listing someone
         # else's account.
         local me
-        me=$(github_api "$GITHUB_API_URL/user" | "$JQ_BIN" -r '.login // ""')
+        me=$(github_api "$GITHUB_API_URL/user" | json_str_field "login")
         if [[ "$me" == "$account" ]]; then
-            endpoint="$GITHUB_API_URL/user/repos?affiliation=owner&visibility=$( [[ $visibility == all ]] && echo all || echo public )"
+            local vis="all"
+            [[ "$visibility" == "all" ]] || vis="public"
+            endpoint="$GITHUB_API_URL/user/repos?affiliation=owner&visibility=$vis"
         else
             endpoint="$GITHUB_API_URL/users/$account/repos?type=owner"
         fi
@@ -113,18 +168,18 @@ list_account_repos() {
             return 1
         fi
 
+        local parsed
+        if ! parsed=$(printf '%s' "$resp" | parse_repos_page); then
+            err "failed to parse repo list for $endpoint (page $page)"
+            return 1
+        fi
+
         local count
-        count=$(echo "$resp" | "$JQ_BIN" 'length')
+        count=$(printf '%s\n' "$parsed" | awk -F'\t' '$1=="__COUNT__"{print $2; exit}')
+        count="${count:-0}"
         [[ "$count" -eq 0 ]] && break
 
-        echo "$resp" | "$JQ_BIN" -r \
-            --arg forks "$INCLUDE_FORKS" \
-            --arg archived "$INCLUDE_ARCHIVED" '
-              .[]
-              | select(($forks == "true") or (.fork == false))
-              | select(($archived == "true") or (.archived == false))
-              | "\(.name)|\(.clone_url)"
-            '
+        printf '%s\n' "$parsed" | awk -F'\t' '$1=="REPO"{print $2"|"$3}'
 
         [[ "$count" -lt "$per_page" ]] && break
         page=$((page + 1))

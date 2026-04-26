@@ -18,18 +18,25 @@ ref — i.e. a full backup that you can restore from with a single
 
 ## Prerequisites
 
+Everything below is available from Synology's official **Package
+Center** — no third-party package repositories (Entware, Homebrew,
+etc.) are needed.
+
 On the NAS (DSM 7.x):
 
 1. **SSH access** enabled (Control Panel → Terminal & SNMP).
-2. **Git** — install the *Git Server* package from Package Center, or
-   `opkg install git git-http` via [Entware][entware].
-3. **jq** — not shipped with DSM. The cleanest option is Entware:
-   `opkg install jq`. After installing Entware, `jq` lives at
-   `/opt/bin/jq`; either add `/opt/bin` to `PATH` for the scheduled
-   task or set `JQ_BIN=/opt/bin/jq` in `config.env`.
-4. **curl** — already present in DSM.
+2. **Git Server** — install from Package Center. This puts `git` on the
+   system `PATH`.
+3. **Python 3** — install from Package Center (the package is named
+   *Python 3.9* or similar, depending on DSM version). Used only for
+   parsing the JSON responses from the GitHub API via the standard
+   library; no `pip` packages are installed. If `python3` ends up at a
+   non-default path (e.g. `/usr/local/bin/python3`), set `PYTHON_BIN`
+   in `config.env` to point to it.
+4. **bash** and **curl** — already present in DSM 7.
 
-[entware]: https://github.com/Entware/Entware/wiki/Install-on-Synology-NAS
+That's it. The script itself is a single bash file you can read end to
+end before running.
 
 ## Setup
 
@@ -136,7 +143,7 @@ git push --mirror https://github.com/stanasiukcom/myrepo.git
 
 | Symptom | Likely cause |
 | --- | --- |
-| `required command not found: jq` | Install Entware + `opkg install jq`, or set `JQ_BIN` to a binary you've installed manually. |
+| `required command not found: python3` | Install the *Python 3* package from Synology Package Center, or set `PYTHON_BIN` in `config.env` to the full path (e.g. `/usr/local/bin/python3`). |
 | `GITHUB_TOKEN is empty` | `config.env` not next to the script, or the token line is commented out. |
 | `clone failed` for one repo | Token lacks access — confirm the org granted the fine-grained token, or that the classic token has `repo` scope. |
 | Task Scheduler reports exit code `1` | At least one repo failed. Check the latest log under `LOG_DIR`. |

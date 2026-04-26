@@ -25,13 +25,19 @@ configuration, and DSM Task Scheduler instructions.
 
 ## Common prerequisites
 
+All scripts in this repo are deliberately built on **first-party
+software only** — DSM itself plus packages from Synology's official
+Package Center. No Entware, Homebrew, `opkg`, or other third-party
+package repositories are required, so the attack surface is whatever
+Synology already ships.
+
 Most scripts in this repo expect:
 
 - SSH access to the NAS (Control Panel → Terminal & SNMP).
-- `git`, `curl`, and `jq`. `git` and `curl` ship with DSM or are
-  installable via Package Center; `jq` is easiest to get through
-  [Entware](https://github.com/Entware/Entware/wiki/Install-on-Synology-NAS)
-  (`opkg install jq`).
+- `bash` and `curl` — already present in DSM 7.
+- `git` — install **Git Server** from Package Center.
+- `python3` — install **Python 3** from Package Center (used only for
+  JSON parsing via the standard library; no `pip` packages).
 
 Per-script requirements and tokens are listed in each subdirectory's
 README.
